@@ -5,19 +5,14 @@ from netCDF4 import Dataset
 import matplotlib
 matplotlib.use('AGG')
 from matplotlib import pyplot as plt
-import matplotlib.colors as mcolors
 import pyart
 import numpy as np
-import numpy.ma as ma
 import os
 from glob import glob
 import warnings
 import datetime as dt
 import sys
 import matplotlib as mpl
-
-from samuraiAnalysis import samPlt
-multXSCrdCalc = samPlt.multXSCrdCalc
 
 
 # Using this for the runtime warnings generated when determining bad values of lat/long
@@ -45,7 +40,7 @@ pltVar = 'DBZ_qc'
 
 
 # Plot NOAA P-3 flight track?
-plotFltTrk = False
+plotFltTrk = True
 # Only plot flight track at times of composites?
 plotFltStatic = False
 # Plot lines indicating sweep locations relative to plane? (Doesn't run if plotFltTrk is False)
@@ -191,10 +186,13 @@ ASOSinfo = ('/data/pecan/a/stechma2/pecan/ASOS-sorted.txt')
 
 # Assign various variable-specific parameters such as plotting limits and colormaps
 if (pltVar == 'reflectivity' or pltVar == 'DBZ_qc'):
-    cMin = -8 # Max and min values to plot
-    cMax = 72
-    cmap = pyart.graph.cm.NWSRef
-    norm = None
+    cMin = -4 # Max and min values to plot
+    cMax = 60
+    cmap = pyart.graph.cm_colorblind.HomeyerRainbow
+    bounds = np.linspace(cMin,cMax,(np.abs(cMin)+np.abs(cMax)+1))
+    norm = mpl.colors.BoundaryNorm(bounds, cmap.N)
+    # norm = None
+    cbarStr = 'Reflectivity (dBZ)'
     saveName = 'refl'
 elif (pltVar == 'VEL_qc' or pltVar == 'VEL_qc'):
     cMin = -51
@@ -202,18 +200,21 @@ elif (pltVar == 'VEL_qc' or pltVar == 'VEL_qc'):
     cmap = pyart.graph.cm.Carbone42
     bounds = np.linspace(cMin,cMax,(np.abs(cMin)+np.abs(cMax)+1))
     norm = mpl.colors.BoundaryNorm(bounds, cmap.N)
+    cbarStr = 'Radial Velocity (m/s)'
     saveName = 'vel'
 elif (pltVar == 'cross_correlation_ratio' or pltVar == 'PHV_qc'):
     cMin = 0
     cMax = 1
     cmap = pyart.graph.cm.RefDiff
     norm = None
+    cbarStr = 'Cross-Correlation Ratio (%)'
     saveName = 'phv'
 elif (pltVar == 'differential_reflectivity' or pltVar == 'ZDR_qc'):
     cMin = -7.9
     cMax = 7.9
     cmap = pyart.graph.cm.RefDiff
     norm = None
+    cbarStr = 'Differential Reflectivity (dBZ)'
     saveName = 'zdr'
 else:
     sys.exit('You have not entered a valid field to plot')
@@ -268,12 +269,47 @@ def calcSwpLatLon (lat1,lon1,heading):
     lonFR = np.rad2deg(lon2foreRightR)
     
     return latAL,lonAL,latAR,lonAR,latFL,lonFL,latFR,lonFR
+    
+def multXSCrdCalc(lat1d,lon1d,distKM,hdng):
+    """
+    Calculates lat/lon pairs at some distance and heading from a given point.
+    This is useful for defining consecutive cross-sections spaced at some given distance.
+
+    Parameters
+    ----------
+    lat1d,lon1d : float
+        Lon/lat coordinates (degrees) of the start/end of reference cross-section.
+    distKM : float
+        Distance from reference point to obtain new point at (in KM)
+    hdng : float
+        Heading (relative to north) of new point relative to reference point.
+     
+    
+
+    Returns
+    -------
+    newLat,newLon : floats
+        Lat/lon (in degrees) of new XS start/end point.
+    """
+
+    lat1 = np.deg2rad(lat1d)
+    lon1 = np.deg2rad(lon1d)
+    
+    rEarth = 6371
+    hdngRad = np.deg2rad(hdng)
+    
+    lat2 = np.arcsin( np.sin(lat1)*np.cos(distKM/rEarth) + np.cos(lat1)*np.sin(distKM/rEarth)*np.cos(hdngRad) )
+
+    lon2 = lon1 + np.arctan2( np.sin(hdngRad)*np.sin(distKM/rEarth)*np.cos(lat1), np.cos(distKM/rEarth)-np.sin(lat1)*np.sin(lat2) )
+    
+    newLat = np.rad2deg(lat2)
+    newLon = np.rad2deg(lon2)
+    
+    return newLat, newLon
 
 
 # ## Create radar file list and FL Dataset
-# Create a list of gridded radar data to loop through and also create a netcdf Dataset object for our flight-level data
-
-# Create list of all pyart gridded netcdf files
+# Create list of all pyart gridded netcdf files to loop through
 radFiles= sorted(glob(gridDir + '/*.nc'))
 
 # Create netcdf Dataset from the specified flight-level file
@@ -282,8 +318,7 @@ if plotFltTrk:
 
 
 # ## Read in required FL data
-# Read in lat/lon and time data. Also, identify and remove any spikes in the lat/lon data (usually at beginning of flight).
-
+# Also, identify and remove any spikes in the lat/lon data (usually at beginning of flight)
 if plotFltTrk:
     if flight == '20150701':
         flLat1 = flData.variables['LatGPS.2'][:]
@@ -315,7 +350,7 @@ if plotFltTrk:
 
     flDate = flData.FlightDate
     
-    # Account for flights where flight crosses midnight (UTC)
+    # Account for cases where flight crosses midnight (UTC)
     if flHH[0] > flHH[-1]:
         flEndDate = list(flDate)
         strtD = int(''.join(flEndDate[3:5]))
@@ -344,8 +379,8 @@ if plotFltTrk:
 
 
 # ## Read in ASOS locations
-# After loaded, convert lat/lon from deg-min to decimal deg. Additionally, determine the lat/lon of a given station if desired
-
+# After loaded, convert lat/lon from deg-min to decimal deg. Additionally, determine the 
+# lat/lon of a given station if desired
 if plotASOSlocs:
     asosI = pd.read_csv(ASOSinfo,header=0,delim_whitespace=True)
 
@@ -370,7 +405,6 @@ if plotASOSlocs:
 
 
 # ## Initialize flight plotting variables
-
 # Fill an array with the recorded grid time for each grid file
 radDT = np.empty(np.shape(radFiles),dtype=object)
 for iz in range(0,len(radFiles)):
@@ -380,8 +414,8 @@ for iz in range(0,len(radFiles)):
     
     radDT[iz] = (dt.datetime.strptime(tmpDateStr,'%Y-%m-%d-%H:%M:%S')).replace(second=0)
        
-# Get difference in minutes so that we know how many minutes of flight
-# track to plot on each given radar composite
+# Get difference in minutes so that we know how many minutes of flight track
+# to plot on each given radar composite
 compDiff = np.ones(len(radDT))
 if not plotFltStatic:
     for ix in range(1,len(radDT)):
@@ -389,7 +423,6 @@ if not plotFltStatic:
 
 
 # ## Plotting
-
 pastTrack = False # We'll set this to true the first time the flight track is in the domain
 
 for ix in range(0,len(radFiles)):
@@ -430,9 +463,10 @@ for ix in range(0,len(radFiles)):
         gridLonMin = np.min(gridLons)-0.5
         gridLonMax = np.max(gridLons)+0.5
     
-        # We want to replot a given composite for every minute we have flight (unless plotFltStatic is True)
-        # data until the next composite
-        # We'll only make a plot for every minute when the plane is actually in the air and within 0.5 deg of the domain
+        # We want to replot a given composite for every minute we have flight (unless plotFltStatic 
+        # is True) data until the next composite
+        # We'll only make a plot for every minute when the plane is actually in the 
+        # air and within 0.5 deg of the domain
         if ((flDT[0]<= radDT[ix] <= flDT[-1]) & (gridLatMin <= crntFLlat <= gridLatMax) & (gridLonMin <= crntFLlon <= gridLonMax)):
             inDomain = True
             inLoop = int(compDiff[ix])
@@ -470,9 +504,9 @@ for ix in range(0,len(radFiles)):
         
             # Plot the gridded data
             display.plot_grid(pltVar,level=pltLevs[iL],vmin=cMin,vmax=cMax,
-                          title=(repr(radAlt[iL]) + ' km AGL ' + pltVar + '\n' + 
+                          title=(repr(radAlt[iL]) + ' km AGL 88-D Composite\n' + 
                                  dt.datetime.strftime(pltT,'%Y-%m-%d %H:%M') + ' UTC'),
-                          cmap=cmap,norm=norm,fig=fig)
+                          cmap=cmap,norm=norm,colorbar_label=cbarStr,fig=fig)
             ax1 = plt.gca()
             ax1.set_title(str(ax1.get_title()),fontsize=20)
 
@@ -631,15 +665,5 @@ for ix in range(0,len(radFiles)):
                     
                 fig.savefig('{}/plots/{}_{:.1f}km-{}{}{}{}{}{}_{}.{}'.format(saveDir,dt.datetime.strftime(pltT,'%Y%m%d'),radAlt[iL],
                             saveName,fltTrkStr,asosStr,grStr,mpStr,grRngStr,dt.datetime.strftime(pltT,'%H%M'),fType),bbox_inches='tight',dpi=100)
-                # if pltGRrange:
-#                     # fig.savefig(saveDir + '/plots/' + dt.datetime.strftime(pltT,'%Y%m%d_') + repr(radAlt[iL]) + 'km-'
-# #                                 + saveName + '-fltTrk-radRng_' + dt.datetime.strftime(pltT,'%H%M.') + fType,bbox_inches='tight',dpi=100)
-#                     fig.savefig('{}/plots/{}_{:.1f}km-{}-fltTrk-radRng_{}.{}'.format(saveDir,dt.datetime.strftime(pltT,'%Y%m%d'),radAlt[iL],
-#                                 saveName,dt.datetime.strftime(pltT,'%H%M'),fType),bbox_inches='tight',dpi=100)
-#                 else:
-#                     # fig.savefig(saveDir + '/plots/' + dt.datetime.strftime(pltT,'%Y%m%d_') + repr(radAlt[iL]) + 'km-'
-# #                                 + saveName + '-fltTrk-asos_' + dt.datetime.strftime(pltT,'%H%M.') + fType,bbox_inches='tight',dpi=100)
-#                     fig.savefig('{}/plots/{}_{:.1f}km-{}-fltTrk-asos_{}.{}'.format(saveDir,dt.datetime.strftime(pltT,'%Y%m%d'),radAlt[iL],
-#                                 saveName,dt.datetime.strftime(pltT,'%H%M'),fType),bbox_inches='tight',dpi=100)
 
             plt.close('all')
