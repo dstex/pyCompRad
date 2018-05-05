@@ -13,16 +13,24 @@ import warnings
 import datetime as dt
 import sys
 import matplotlib as mpl
+import argparse
 
 
 # Using this for the runtime warnings generated when determining bad values of lat/long
 # Pretty sure it is just because of the NaNs in there, but will want to check into this...
 warnings.filterwarnings("ignore",category=RuntimeWarning)
 
+parser = argparse.ArgumentParser()
+parser.add_argument("flight", help="IOP/UFO date in the form: YYYYMMDD")
+
+args = parser.parse_args()
+
+flight = args.flight
+
 
 # ## Code options and parameters
 
-flight = '20150709'
+# flight = '20150709'
 
 # pltLevs = np.arange(0,14) # 0.5-km vertical level increments; 0 = 1 km, 1 = 1.5 km, ...
 # pltLevs = [0,1,5,7]
